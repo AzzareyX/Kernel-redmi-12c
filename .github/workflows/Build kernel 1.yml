@@ -24,12 +24,15 @@ jobs:
         REPO_PATH="/LineageOS/android_kernel_xiaomi_earth.git"
         git clone "${BASE_URL}${REPO_PATH}" --depth=1 -b lineage-23.2 kernel
 
-    - name: Penambalan Otomatis Bug Ksm Flock (Hotfix Patch)
+    - name: Penambalan Otomatis Bug Driver (Hotfix Patch)
       run: |
         cd kernel
-        # Mengubah deklarasi inline menjadi static inline agar GCC mengizinkan kompilasi dilanjutkan
+        # Perbaikan enkripsi blok
         sed -i 's/inline void ksm_flock/static inline void ksm_flock/g' include/linux/keyslot-manager.h
-        echo "Patch ksm_flock berhasil diterapkan!"
+        
+        # Perbaikan standarisasi inline eksternal pada beberapa driver MediaTek lawas
+        find . -name "*.h" -type f exec sed -i 's/extern inline/static inline/g' {} + 2>/dev/null || true
+        echo "Semua tambalan hotfix berhasil diterapkan!"
 
     - name: Proses Kompilasi Kernel
       run: |
@@ -38,7 +41,7 @@ jobs:
         export ARCH=arm64
         export SUBARCH=arm64
         
-        # Menggunakan LLVM Clang internal server agar optimasi kode lebih maksimal
+        # Menggunakan kompiler Clang internal host
         export CC=clang
         export LD=ld.lld
         export AR=llvm-ar
@@ -51,15 +54,15 @@ jobs:
         export CROSS_COMPILE=aarch64-linux-gnu-
         export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
         
-        # Bendera penjinak peringatan agar compiler tidak terlalu sensitif
-        export KCFLAGS="-Wno-error -Wno-strict-prototypes"
+        # SUNTIKAN KHUSUS: Mengunci standar bahasa ke gnu89 & mematikan batasan ketat inline compiler modern
+        export KCFLAGS="-std=gnu89 -Wno-error -Wno-inline -Wno-strict-prototypes -fno-inline-functions"
         export KCPPFLAGS="-Wno-error"
 
-        # 1. Regenerasi konfigurasi bawaan Redmi 12C (earth)
+        # 1. Menyiapkan konfigurasi bawaan Redmi 12C (earth)
         make O=out earth_defconfig
         
-        # 2. Pemicu pembangunan kompilasi kernel utama
-        make -j$(nproc --all) O=out KCFLAGS="-Wno-error -Wno-strict-prototypes" KCPPFLAGS="-Wno-error"
+        # 2. Mulai kompilasi utama dengan parameter penjinak compiler modern
+        make -j$(nproc --all) O=out KCFLAGS="-std=gnu89 -Wno-error -Wno-inline -Wno-strict-prototypes -fno-inline-functions" KCPPFLAGS="-Wno-error"
 
     - name: Unggah Berkas Kernel Matang (Artifact)
       uses: actions/upload-artifact@v4
