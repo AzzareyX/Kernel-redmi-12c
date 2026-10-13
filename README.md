@@ -1,0 +1,1 @@
+# Kernel-redmi-12c
