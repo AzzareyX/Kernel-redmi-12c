@@ -24,14 +24,17 @@ jobs:
         REPO_PATH="/LineageOS/android_kernel_xiaomi_earth.git"
         git clone "${BASE_URL}${REPO_PATH}" --depth=1 -b lineage-23.2 kernel
 
-    - name: Unduh Toolchain Kompiler via Arsip Langsung (Proton Clang Zip)
+    - name: Unduh Toolchain Kompiler via Arsip Resmi (AOSP Clang Tarball)
       run: |
-        # Mengunduh arsip biner langsung tanpa git clone agar terhindar dari error Username/Password
-        curl -LO "https://googlesource.com"
+        # Mengunduh arsip kompresi resmi dari Google Source menggunakan wget agar stabil
+        BASE_URL="https://android.googlesource.com"
+        REPO_PATH="/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master-kernel-build-2022/clang-r450784d.tar.gz"
+        
         mkdir -p toolchain
-        tar -xzf clang-r450784d.tar.gz -C toolchain/
-        rm -f clang-r450784d.tar.gz
-        echo "Toolchain Clang berhasil dipasang secara independen!"
+        wget -q "${BASE_URL}${REPO_PATH}" -O clang.tar.gz
+        tar -xzf clang.tar.gz -C toolchain/
+        rm -f clang.tar.gz
+        echo "Toolchain Clang r450784d berhasil terpasang!"
 
     - name: Penambalan Otomatis Bug Driver (Hotfix Patch)
       run: |
