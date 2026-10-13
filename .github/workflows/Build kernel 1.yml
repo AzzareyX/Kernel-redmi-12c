@@ -16,7 +16,7 @@ jobs:
     - name: Instalasi Kompiler Resmi & Dependensi Linux
       run: |
         sudo apt-get update
-        sudo apt-get install -y bc build-essential libncurses5-dev libssl-dev xz-utils git make ccache clang lld llvm crossbuild-essential-arm64 crossbuild-essential-armhf libssl-dev tzdata libkmod-dev libelf-dev
+        sudo apt-get install -y bc build-essential libncurses5-dev libssl-dev xz-utils git make ccache clang lld llvm crossbuild-essential-arm64 crossbuild-essential-armhf libssl-dev tzdata libkmod-dev libelf-dev wget curl
 
     - name: Unduh Source Code Kernel (LineageOS Earth)
       run: |
@@ -24,15 +24,21 @@ jobs:
         REPO_PATH="/LineageOS/android_kernel_xiaomi_earth.git"
         git clone "${BASE_URL}${REPO_PATH}" --depth=1 -b lineage-23.2 kernel
 
+    - name: Unduh Toolchain Kompiler via Arsip Langsung (Proton Clang Zip)
+      run: |
+        # Mengunduh arsip biner langsung tanpa git clone agar terhindar dari error Username/Password
+        curl -LO "https://googlesource.com"
+        mkdir -p toolchain
+        tar -xzf clang-r450784d.tar.gz -C toolchain/
+        rm -f clang-r450784d.tar.gz
+        echo "Toolchain Clang berhasil dipasang secara independen!"
+
     - name: Penambalan Otomatis Bug Driver (Hotfix Patch)
       run: |
         cd kernel
-        # Perbaikan enkripsi blok
+        # Mengatasi eror keyslot manager enkripsi penyimpanan MediaTek 4.19
         sed -i 's/inline void ksm_flock/static inline void ksm_flock/g' include/linux/keyslot-manager.h
-        
-        # Perbaikan standarisasi inline eksternal pada beberapa driver MediaTek lawas
-        find . -name "*.h" -type f exec sed -i 's/extern inline/static inline/g' {} + 2>/dev/null || true
-        echo "Semua tambalan hotfix berhasil diterapkan!"
+        echo "Tambalan hotfix berhasil diterapkan!"
 
     - name: Proses Kompilasi Kernel
       run: |
@@ -41,7 +47,10 @@ jobs:
         export ARCH=arm64
         export SUBARCH=arm64
         
-        # Menggunakan kompiler Clang internal host
+        # Memasukkan folder toolchain independen ke dalam System PATH
+        export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
+        
+        # Pengaturan bendera Cross-Compile menggunakan ekosistem AOSP Clang Penuh (LLVM)
         export CC=clang
         export LD=ld.lld
         export AR=llvm-ar
@@ -50,19 +59,19 @@ jobs:
         export OBJDUMP=llvm-objdump
         export STRIP=llvm-strip
         
-        # Jalur cross-compiler bawaan sistem Ubuntu
+        # Menggunakan LLVM bawaan toolchain AOSP untuk tugas cross-compile target
         export CROSS_COMPILE=aarch64-linux-gnu-
         export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
         
-        # SUNTIKAN KHUSUS: Mengunci standar bahasa ke gnu89 & mematikan batasan ketat inline compiler modern
-        export KCFLAGS="-std=gnu89 -Wno-error -Wno-inline -Wno-strict-prototypes -fno-inline-functions"
+        # Bendera pelindung dari warning standar compiler ketat
+        export KCFLAGS="-Wno-error -Wno-strict-prototypes"
         export KCPPFLAGS="-Wno-error"
 
-        # 1. Menyiapkan konfigurasi bawaan Redmi 12C (earth)
+        # 1. Regenerasi berkas cetak biru Redmi 12C (earth)
         make O=out earth_defconfig
         
-        # 2. Mulai kompilasi utama dengan parameter penjinak compiler modern
-        make -j$(nproc --all) O=out KCFLAGS="-std=gnu89 -Wno-error -Wno-inline -Wno-strict-prototypes -fno-inline-functions" KCPPFLAGS="-Wno-error"
+        # 2. Mulai kompilasi utama secara otomatis
+        make -j$(nproc --all) O=out KCFLAGS="-Wno-error -Wno-strict-prototypes" KCPPFLAGS="-Wno-error"
 
     - name: Unggah Berkas Kernel Matang (Artifact)
       uses: actions/upload-artifact@v4
