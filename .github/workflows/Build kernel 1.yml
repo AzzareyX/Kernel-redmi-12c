@@ -24,11 +24,19 @@ jobs:
         REPO_PATH="/LineageOS/android_kernel_xiaomi_earth.git"
         git clone "${BASE_URL}${REPO_PATH}" --depth=1 -b lineage-23.2 kernel
 
-    - name: Unduh Toolchain Kompiler Ringkas (Proton Clang)
+    - name: Unduh Toolchain Kompiler Resmi (AOSP Clang Standar)
       run: |
+        # Mengunduh Clang prebuilt yang sudah di-ekstrak datar agar tidak terkendala eror folder bertingkat
+        BASE_URL="https://gitlab.com"
+        REPO_PATH="/ZyCromaX/Clang.git"
+        git clone "${BASE_URL}${REPO_PATH}" --depth=1 -b main toolchain
+
+    - name: Unduh Toolchain Pendamping (Eva GCC arm64 & arm32)
+      run: |
+        # Mengunduh GCC pendamping yang wajib ada untuk arsitektur MediaTek 4.19
         BASE_URL="https://github.com"
-        REPO_PATH="/kdrag0n/proton-clang.git"
-        git clone "${BASE_URL}${REPO_PATH}" --depth=1 toolchain
+        git clone "${BASE_URL}/mvaisakh/gcc-arm64.git" --depth=1 gcc64
+        git clone "${BASE_URL}/mvaisakh/gcc-arm.git" --depth=1 gcc32
 
     - name: Proses Kompilasi Kernel
       run: |
@@ -36,9 +44,11 @@ jobs:
         
         export ARCH=arm64
         export SUBARCH=arm64
-        export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
         
-        # Pengaturan compiler Clang + Penjinak Warning agar tidak dianggap Error
+        # Memasukkan semua jalur biner compiler ke dalam System PATH environment
+        export PATH="$GITHUB_WORKSPACE/toolchain/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
+        
+        # Pengaturan bendera Compiler Silang (Cross-Compile Flags)
         export CC=clang
         export LD=ld.lld
         export AR=llvm-ar
@@ -46,17 +56,19 @@ jobs:
         export OBJCOPY=llvm-objcopy
         export OBJDUMP=llvm-objdump
         export STRIP=llvm-strip
-        export CROSS_COMPILE=aarch64-linux-gnu-
-        export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
         
-        # Menyuntikkan perintah penjinak peringatan compiler (Disable Werror)
+        # Mengarahkan pengerjaan perakitan biner ke GCC pendamping khusus MTK
+        export CROSS_COMPILE=aarch64-linux-android-
+        export CROSS_COMPILE_ARM32=arm-linux-androideabi-
+        
+        # Menjinakkan peringatan ketat agar tidak memicu pemutusan paksa (Force Stop)
         export KCFLAGS="-Wno-error"
         export KCPPFLAGS="-Wno-error"
 
-        # Pembuatan konfigurasi bawaan Redmi 12C
+        # 1. Regenerasi berkas cetak biru Redmi 12C (earth)
         make O=out earth_defconfig
         
-        # Jalankan kompilasi utama
+        # 2. Eksekusi pembangunan kernel secara multi-thread
         make -j$(nproc --all) O=out KCFLAGS="-Wno-error" KCPPFLAGS="-Wno-error"
 
     - name: Unggah Berkas Kernel Matang (Artifact)
