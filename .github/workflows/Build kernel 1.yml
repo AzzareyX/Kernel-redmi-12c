@@ -26,10 +26,11 @@ jobs:
 
     - name: Unduh Toolchain Kompiler Resmi (AOSP Clang)
       run: |
-        # Memperbaiki subdomain menjadi android.googlesource.com agar tidak 404
+        # Mengubah target branch kloning ke rilisan resmi Android 14 agar folder clang-r450784d tersedia
         BASE_URL="https://android.googlesource.com"
         REPO_PATH="/platform/prebuilts/clang/host/linux-x86"
-        git clone "${BASE_URL}${REPO_PATH}" --depth=1 -b master aosp-clang
+        git clone "${BASE_URL}${REPO_PATH}" --depth=1 -b android-14.0.0_r44 aosp-clang
+        
         mkdir -p toolchain
         mv aosp-clang/clang-r450784d/* toolchain/
         rm -rf aosp-clang
