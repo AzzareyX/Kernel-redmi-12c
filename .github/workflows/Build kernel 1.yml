@@ -24,16 +24,15 @@ jobs:
         REPO_PATH="/LineageOS/android_kernel_xiaomi_earth.git"
         git clone "${BASE_URL}${REPO_PATH}" --depth=1 -b lineage-23.2 kernel
 
-    - name: Unduh Toolchain Kompiler Resmi (AOSP Clang Standar)
+    - name: Unduh Toolchain Kompiler Resmi (AOSP Clang Publik)
       run: |
-        # Mengunduh Clang prebuilt yang sudah di-ekstrak datar agar tidak terkendala eror folder bertingkat
-        BASE_URL="https://gitlab.com"
-        REPO_PATH="/ZyCromaX/Clang.git"
-        git clone "${BASE_URL}${REPO_PATH}" --depth=1 -b main toolchain
+        # Menggunakan repositori AOSP Clang publik di GitHub agar tidak meminta username/password
+        BASE_URL="https://github.com"
+        REPO_PATH="/LineageOS/android_prebuilts_clang_host_linux-x86.git"
+        git clone "${BASE_URL}${REPO_PATH}" --depth=1 -b master toolchain
 
     - name: Unduh Toolchain Pendamping (Eva GCC arm64 & arm32)
       run: |
-        # Mengunduh GCC pendamping yang wajib ada untuk arsitektur MediaTek 4.19
         BASE_URL="https://github.com"
         git clone "${BASE_URL}/mvaisakh/gcc-arm64.git" --depth=1 gcc64
         git clone "${BASE_URL}/mvaisakh/gcc-arm.git" --depth=1 gcc32
@@ -45,8 +44,11 @@ jobs:
         export ARCH=arm64
         export SUBARCH=arm64
         
+        # Mencari folder versi clang otomatis di dalam toolchain resmi LineageOS
+        CLANG_VERSION=$(ls $GITHUB_WORKSPACE/toolchain/ | grep -E '^clang-r[0-9]+' | head -n 1)
+        
         # Memasukkan semua jalur biner compiler ke dalam System PATH environment
-        export PATH="$GITHUB_WORKSPACE/toolchain/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
+        export PATH="$GITHUB_WORKSPACE/toolchain/$CLANG_VERSION/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
         
         # Pengaturan bendera Compiler Silang (Cross-Compile Flags)
         export CC=clang
