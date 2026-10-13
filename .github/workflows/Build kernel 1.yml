@@ -20,15 +20,14 @@ jobs:
 
     - name: Unduh Source Code Kernel (LineageOS Earth)
       run: |
-        # Menggunakan penggabungan variabel teks (string concatenation) untuk menghindari pemotongan URL otomatis
         BASE_URL="https://github.com"
         REPO_PATH="/LineageOS/android_kernel_xiaomi_earth.git"
         git clone "${BASE_URL}${REPO_PATH}" --depth=1 -b lineage-23.2 kernel
 
     - name: Unduh Toolchain Kompiler Resmi (AOSP Clang)
       run: |
-        # Menggunakan trik variabel pemisah teks untuk tautan Google Source
-        BASE_URL="https://googlesource.com"
+        # Memperbaiki subdomain menjadi android.googlesource.com agar tidak 404
+        BASE_URL="https://android.googlesource.com"
         REPO_PATH="/platform/prebuilts/clang/host/linux-x86"
         git clone "${BASE_URL}${REPO_PATH}" --depth=1 -b master aosp-clang
         mkdir -p toolchain
