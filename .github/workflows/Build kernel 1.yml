@@ -24,16 +24,12 @@ jobs:
         REPO_PATH="/LineageOS/android_kernel_xiaomi_earth.git"
         git clone "${BASE_URL}${REPO_PATH}" --depth=1 -b lineage-23.2 kernel
 
-    - name: Unduh Toolchain Kompiler Resmi (AOSP Clang)
+    - name: Unduh Toolchain Kompiler Ringkas (Proton Clang)
       run: |
-        # Mengubah target branch kloning ke rilisan resmi Android 14 agar folder clang-r450784d tersedia
-        BASE_URL="https://android.googlesource.com"
-        REPO_PATH="/platform/prebuilts/clang/host/linux-x86"
-        git clone "${BASE_URL}${REPO_PATH}" --depth=1 -b android-14.0.0_r44 aosp-clang
-        
-        mkdir -p toolchain
-        mv aosp-clang/clang-r450784d/* toolchain/
-        rm -rf aosp-clang
+        # Menggunakan Proton Clang yang strukturnya datar dan stabil untuk Kernel MediaTek 4.19
+        BASE_URL="https://github.com"
+        REPO_PATH="/kdrag0n/proton-clang.git"
+        git clone "${BASE_URL}${REPO_PATH}" --depth=1 toolchain
 
     - name: Proses Kompilasi Kernel
       run: |
@@ -43,6 +39,7 @@ jobs:
         export SUBARCH=arm64
         export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
         
+        # Pengaturan kompiler Clang penuh
         export CC=clang
         export LD=ld.lld
         export AR=llvm-ar
@@ -53,7 +50,10 @@ jobs:
         export CROSS_COMPILE=aarch64-linux-gnu-
         export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
+        # Pembuatan konfigurasi bawaan Redmi 12C
         make O=out earth_defconfig
+        
+        # Proses build kompilasi utama
         make -j$(nproc --all) O=out
 
     - name: Unggah Berkas Kernel Matang (Artifact)
