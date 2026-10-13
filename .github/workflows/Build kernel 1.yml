@@ -20,11 +20,17 @@ jobs:
 
     - name: Unduh Source Code Kernel (LineageOS Earth)
       run: |
-        git clone https://github.com --depth=1 -b lineage-23.2 kernel
+        # Menggunakan penggabungan variabel teks (string concatenation) untuk menghindari pemotongan URL otomatis
+        BASE_URL="https://github.com"
+        REPO_PATH="/LineageOS/android_kernel_xiaomi_earth.git"
+        git clone "${BASE_URL}${REPO_PATH}" --depth=1 -b lineage-23.2 kernel
 
     - name: Unduh Toolchain Kompiler Resmi (AOSP Clang)
       run: |
-        git clone https://googlesource.com --depth=1 -b master aosp-clang
+        # Menggunakan trik variabel pemisah teks untuk tautan Google Source
+        BASE_URL="https://googlesource.com"
+        REPO_PATH="/platform/prebuilts/clang/host/linux-x86"
+        git clone "${BASE_URL}${REPO_PATH}" --depth=1 -b master aosp-clang
         mkdir -p toolchain
         mv aosp-clang/clang-r450784d/* toolchain/
         rm -rf aosp-clang
