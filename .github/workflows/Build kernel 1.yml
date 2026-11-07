@@ -1,249 +1,121 @@
-name: Merge Linux CIP 4.19 (diagnose, no fork)
-
-# Jalankan di repo kecil milikmu (bukan fork kernel).
-# Fokus: merge CIP lalu bila gagal/konflik, simpan log + diff + potongan
-# conflict marker per file sebagai artifact, dan tandai job FAILED.
+name: Merge CIP 4.19 (Redmi 12C / earth)
 
 on:
   workflow_dispatch:
     inputs:
-      base_branch:
-        description: "Branch kernel LineageOS"
-        required: true
-        default: lineage-23.2
       cip_tag:
-        description: "Tag CIP. Kosongkan = otomatis v4.19.*-cip* terbaru"
-        required: false
-        default: ""
-      push_branch:
-        description: "Nama branch hasil merge"
+        description: "Tag CIP (mis. v4.19.325-cip136)"
         required: true
-        default: merge/linux-cip-4.19
-      merge_mode:
-        description: "report = berhenti & laporkan konflik (disarankan). theirs = paksa pakai versi CIP"
-        type: choice
-        options:
-          - report
-          - theirs
-        default: report
-      target_repo:
-        description: "owner/repo tujuan push. Kosong = repo workflow ini"
-        required: false
-        default: ""
-      push:
-        description: "Push branch hanya kalau merge bersih"
-        type: boolean
+        default: "v4.19.325-cip136"
+      build:
+        description: "Build test setelah merge?"
+        required: true
         default: true
+        type: boolean
+      push_branch:
+        description: "Push hasil merge ke branch baru di fork ini? (butuh permissions write)"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: write
 
 concurrency:
-  group: merge-cip-diagnose
-  cancel-in-progress: false
-
-env:
-  KERNEL_REPO: https://github.com/LineageOS/android_kernel_xiaomi_earth.git
-  CIP_REPO: https://git.kernel.org/pub/scm/linux/kernel/git/cip/linux-cip.git
+  group: merge-cip-earth
+  cancel-in-progress: true
 
 jobs:
-  merge:
-    runs-on: ubuntu-latest
-    timeout-minutes: 240
+  merge-and-build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
     steps:
-      - name: Pilih tag CIP 4.19 terbaru
-        id: cip
-        env:
-          CIP_TAG_INPUT: ${{ inputs.cip_tag }}
-        run: |
-          set -euo pipefail
-          if [ -z "$CIP_TAG_INPUT" ]; then
-            TAG=$(git ls-remote --tags --refs "$CIP_REPO" 'v4.19.*-cip*' \
-              | awk '{print $2}' | sed 's#refs/tags/##' \
-              | grep -E '^v4\.19\.[0-9]+-cip[0-9]+$' \
-              | sort -V | tail -1)
-          else
-            TAG="$CIP_TAG_INPUT"
-          fi
-          test -n "${TAG:-}"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "CIP tag: $TAG"
+      - name: Checkout lineage-23.2 (full history)
+        uses: actions/checkout@v4
+        with:
+          ref: lineage-23.2
+          fetch-depth: 0
 
-      - name: Clone kernel upstream (tanpa fork)
-        env:
-          BASE_BRANCH: ${{ inputs.base_branch }}
+      - name: Setup git
         run: |
-          set -euo pipefail
-          git clone --single-branch --branch "$BASE_BRANCH" "$KERNEL_REPO" kernel
-          cd kernel
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          echo "Base commit: $(git log --oneline -1)"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config commit.gpgsign false
 
-      - name: Fetch tag CIP
+      - name: Fetch CIP
         env:
-          TAG: ${{ steps.cip.outputs.tag }}
+          CIP_TAG: ${{ inputs.cip_tag }}
         run: |
-          set -euo pipefail
-          cd kernel
-          git fetch --no-tags "$CIP_REPO" "+refs/tags/$TAG:refs/tags/$TAG"
+          git remote add cip https://gitlab.com/cip-project/cip-kernel/linux-cip.git || true
+          git fetch cip "refs/tags/${CIP_TAG}:refs/tags/${CIP_TAG}" --no-tags
+          git log --oneline -1 "${CIP_TAG}"
 
-      - name: Merge + rekam konflik
-        id: merge
+      - name: Merge CIP
         env:
-          BASE_BRANCH: ${{ inputs.base_branch }}
-          PUSH_BRANCH: ${{ inputs.push_branch }}
-          MERGE_MODE: ${{ inputs.merge_mode }}
-          TAG: ${{ steps.cip.outputs.tag }}
+          CIP_TAG: ${{ inputs.cip_tag }}
         run: |
-          set -euo pipefail
-          cd kernel
-          REPORT="$GITHUB_WORKSPACE/report"
-          mkdir -p "$REPORT/conflicts"
-          : > "$REPORT/conflict-files.txt"
+          set +e
+          git merge --no-commit --no-ff "${CIP_TAG}"
+          MERGE_RC=$?
+          set -e
 
-          if [ "$PUSH_BRANCH" = "$BASE_BRANCH" ]; then
-            echo "::error::push_branch tidak boleh sama dengan base_branch"
+          git diff --name-only --diff-filter=U > conflicts.txt || true
+          echo "=== Conflict files ==="
+          cat conflicts.txt || true
+
+          CIP_NUM=$(echo "${CIP_TAG}" | sed -E 's/.*-cip([0-9]+).*/\1/')
+          ST_NUM=$((CIP_NUM - 116))   # cip124=st8, cip136=st20
+          echo "CIP_NUM=${CIP_NUM} ST_NUM=${ST_NUM}" >> "$GITHUB_ENV"
+
+          # Bump versi kernel (ini file yang memang dikelola manual di tree Android)
+          printf -- "-cip%s\n" "${CIP_NUM}" > localversion-cip
+          printf -- "-st%s\n"  "${ST_NUM}"  > localversion-st
+          git add localversion-cip localversion-st
+          rm -f conflicts.txt
+
+          if [ -s conflicts.txt ]; then
+            echo "::error::Merge berhenti: ada konflik di luar localversion-*. Lihat artifact conflicts.txt"
             exit 1
           fi
 
-          git switch -C "$PUSH_BRANCH"
-          git rev-parse HEAD > "$REPORT/base-commit.txt"
-          git rev-parse "refs/tags/$TAG" > "$REPORT/cip-commit.txt"
-          git merge-base HEAD "refs/tags/$TAG" > "$REPORT/merge-base.txt" 2>/dev/null || true
-          git log --oneline --left-right --graph "HEAD...refs/tags/$TAG" \
-            > "$REPORT/divergence.txt" 2>/dev/null || true
+          git commit -m "Merge CIP ${CIP_TAG} into lineage-23.2 (earth)"
+          git log --oneline -3
+          cat localversion-cip localversion-st
 
-          ARGS=(--no-ff --no-edit -m "Merge Linux CIP $TAG into $BASE_BRANCH")
-          if [ "$MERGE_MODE" = "theirs" ]; then
-            ARGS+=(-X theirs)
-          fi
+      - name: Install build deps
+        if: inputs.build
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-aarch64-linux-gnu clang lld flex bison bc \
+            libssl-dev libelf-dev cpio rsync python3
 
-          set +e
-          git merge "${ARGS[@]}" "refs/tags/$TAG" > "$REPORT/merge.log" 2>&1
-          RC=$?
+      - name: Build test (earth_defconfig, GCC aarch64)
+        if: inputs.build
+        run: |
           set -e
-          cat "$REPORT/merge.log"
+          make -j"$(nproc)" O=out ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- earth_defconfig
+          make -j"$(nproc)" O=out ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- Image.gz dtbs
+          ls -lh out/arch/arm64/boot/Image.gz
+          cp out/.config kernel-config.txt
 
-          if [ "$RC" -eq 0 ]; then
-            echo "clean=true" >> "$GITHUB_OUTPUT"
-            git log --oneline -1 > "$REPORT/result.txt"
-            git diff --stat HEAD^1 HEAD > "$REPORT/diff-stat.txt" 2>/dev/null || true
-            {
-              echo "## Merge CIP bersih"
-              echo ""
-              echo "- CIP tag: \`$TAG\`"
-              echo "- Base: \`$BASE_BRANCH\`"
-              echo "- Merge commit: \`$(git rev-parse --short HEAD)\`"
-              echo ""
-              echo '```'
-              git diff --stat HEAD^1 HEAD | tail -20 || true
-              echo '```'
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          # --- Merge gagal / konflik: kumpulkan bukti selengkap mungkin ---
-          echo "clean=false" >> "$GITHUB_OUTPUT"
-          git status --short > "$REPORT/git-status.txt" 2>/dev/null || true
-          git ls-files -u > "$REPORT/unmerged-stages.txt" 2>/dev/null || true
-          git diff --name-only --diff-filter=U | sort -u > "$REPORT/conflict-files.txt" || true
-          git diff --cc > "$REPORT/conflicts-all.diff" 2>/dev/null || true
-
-          while IFS= read -r f; do
-            [ -n "$f" ] || continue
-            safe=$(printf '%s' "$f" | tr '/ ' '__')
-            git diff --cc -- "$f" > "$REPORT/conflicts/$safe.diff" 2>/dev/null || true
-            if [ ! -s "$REPORT/conflicts/$safe.diff" ]; then
-              git diff -- "$f" > "$REPORT/conflicts/$safe.diff" 2>/dev/null || true
-            fi
-            # potongan asli conflict marker (bagian yang bentrok)
-            awk '/^<<<<<<< /{p=1} p{print} /^>>>>>>> /{p=0; print "---"}' "$f" \
-              > "$REPORT/conflicts/$safe.markers.txt" 2>/dev/null || true
-          done < "$REPORT/conflict-files.txt"
-
-          COUNT=$(wc -l < "$REPORT/conflict-files.txt" | tr -d ' ')
-          HUNKS=$(grep -rh --include='*.markers.txt' '^<<<<<<< ' "$REPORT/conflicts" 2>/dev/null | wc -l | tr -d ' ') || HUNKS=0
-
-          {
-            echo "## Merge CIP: KONFLIK / GAGAL"
-            echo ""
-            echo "| Item | Nilai |"
-            echo "|---|---|"
-            echo "| CIP tag | \`$TAG\` |"
-            echo "| Base | \`$BASE_BRANCH\` |"
-            echo "| File konflik | **$COUNT** |"
-            echo "| Conflict hunk | **$HUNKS** |"
-            echo ""
-            echo "### File konflik"
-            echo '```'
-            if [ "$COUNT" -gt 0 ]; then
-              head -100 "$REPORT/conflict-files.txt"
-            else
-              echo "(tidak ada unmerged file - lihat merge.log, kemungkinan gagal karena sebab lain)"
-            fi
-            echo '```'
-            if [ "$COUNT" -gt 100 ]; then
-              echo "_...dan $((COUNT - 100)) file lainnya, lihat artifact._"
-            fi
-            if [ "$COUNT" -gt 0 ]; then
-              echo ""
-              echo "### Sebaran per direktori"
-              echo '```'
-              awk -F/ '{print $1"/"$2}' "$REPORT/conflict-files.txt" \
-                | sort | uniq -c | sort -rn | head -15
-              echo '```'
-            fi
-            echo ""
-            echo "### Tail merge.log"
-            echo '```'
-            tail -30 "$REPORT/merge.log"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          # tampilkan maksimal 10 annotation biar kelihatan di UI
-          N=0
-          while IFS= read -r f; do
-            [ -n "$f" ] || continue
-            [ "$N" -lt 10 ] || break
-            echo "::error file=$f,line=1,title=Merge conflict::Konflik merge CIP $TAG"
-            N=$((N + 1))
-          done < "$REPORT/conflict-files.txt"
-
-          git merge --abort || true
-          echo "::error::Merge gagal. Download artifact 'cip-merge-report' untuk daftar file, diff, dan conflict marker."
-          exit 1
-
-      - name: Push kalau merge bersih
-        if: ${{ inputs.push && steps.merge.outputs.clean == 'true' }}
-        env:
-          PUSH_BRANCH: ${{ inputs.push_branch }}
-          TARGET_REPO_INPUT: ${{ inputs.target_repo }}
-          TOKEN: ${{ secrets.PAT || github.token }}
-        run: |
-          set -euo pipefail
-          cd kernel
-          TARGET_REPO="${TARGET_REPO_INPUT:-$GITHUB_REPOSITORY}"
-          git remote add target "https://x-access-token:${TOKEN}@github.com/${TARGET_REPO}.git"
-          git push --force target "HEAD:refs/heads/$PUSH_BRANCH"
-          echo "Pushed: https://github.com/${TARGET_REPO}/tree/${PUSH_BRANCH}"
-
-      - name: Tarball source kalau merge bersih
-        if: always() && steps.merge.outputs.clean == 'true'
-        env:
-          TAG: ${{ steps.cip.outputs.tag }}
-        run: |
-          set -euo pipefail
-          cd kernel
-          git archive --format=tar.gz \
-            --prefix="android_kernel_xiaomi_earth-${TAG}/" \
-            -o "$GITHUB_WORKSPACE/report/kernel-${TAG}.tar.gz" HEAD
-
-      - name: Upload report
+      - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cip-merge-report
-          path: report
-          if-no-files-found: ignore
-          retention-days: 30
+          name: cip-merge-result-${{ github.run_number }}
+          path: |
+            conflicts.txt
+            kernel-config.txt
+            out/arch/arm64/boot/Image.gz
+          if-no-files-found: warn
+
+      - name: Push merge branch (opsional)
+        if: inputs.push_branch
+        run: |
+          BRANCH="cip${CIP_NUM}-merge"
+          git checkout -b "${BRANCH}"
+          git push origin "${BRANCH}" --force-with-lease
+          echo "Pushed branch: ${BRANCH}"
