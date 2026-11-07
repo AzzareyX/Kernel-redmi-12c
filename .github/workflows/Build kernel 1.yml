@@ -1,4 +1,4 @@
-name: Merge CIP 4.19 (Redmi 12C / earth)
+name: Build Kernel Redmi 12C (earth) - Merge CIP 4.19
 
 on:
   workflow_dispatch:
@@ -13,7 +13,7 @@ on:
         default: true
         type: boolean
       push_branch:
-        description: "Push hasil merge ke branch baru di fork ini? (butuh permissions write)"
+        description: "Push hasil merge ke branch baru di repo ini?"
         required: true
         default: false
         type: boolean
@@ -22,7 +22,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: merge-cip-earth
+  group: build-kernel-earth
   cancel-in-progress: true
 
 jobs:
@@ -30,54 +30,64 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 180
     steps:
-      - name: Checkout lineage-23.2 (full history)
+      - name: Checkout kernel LineageOS (ke subfolder kernel/)
         uses: actions/checkout@v4
         with:
+          repository: LineageOS/android_kernel_xiaomi_earth
           ref: lineage-23.2
           fetch-depth: 0
+          path: kernel
 
       - name: Setup git
+        working-directory: kernel
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config commit.gpgsign false
+          git log --oneline -1
+          cat localversion-cip localversion-st
 
       - name: Fetch CIP
+        working-directory: kernel
         env:
           CIP_TAG: ${{ inputs.cip_tag }}
         run: |
           git remote add cip https://gitlab.com/cip-project/cip-kernel/linux-cip.git || true
-          git fetch cip "refs/tags/${CIP_TAG}:refs/tags/${CIP_TAG}" --no-tags
+          git fetch cip "refs/tags/${CIP_TAG}:refs/tags/${CIP_TAG}"
           git log --oneline -1 "${CIP_TAG}"
 
       - name: Merge CIP
+        working-directory: kernel
         env:
           CIP_TAG: ${{ inputs.cip_tag }}
         run: |
           set +e
           git merge --no-commit --no-ff "${CIP_TAG}"
-          MERGE_RC=$?
           set -e
 
+          echo "=== File konflik setelah merge ==="
           git diff --name-only --diff-filter=U > conflicts.txt || true
-          echo "=== Conflict files ==="
           cat conflicts.txt || true
 
           CIP_NUM=$(echo "${CIP_TAG}" | sed -E 's/.*-cip([0-9]+).*/\1/')
           ST_NUM=$((CIP_NUM - 116))   # cip124=st8, cip136=st20
-          echo "CIP_NUM=${CIP_NUM} ST_NUM=${ST_NUM}" >> "$GITHUB_ENV"
+          echo "CIP_NUM=${CIP_NUM}" >> "$GITHUB_ENV"
+          echo "ST_NUM=${ST_NUM}"   >> "$GITHUB_ENV"
 
-          # Bump versi kernel (ini file yang memang dikelola manual di tree Android)
+          # Bump versi (file ini dikelola manual di tree Android)
           printf -- "-cip%s\n" "${CIP_NUM}" > localversion-cip
           printf -- "-st%s\n"  "${ST_NUM}"  > localversion-st
           git add localversion-cip localversion-st
-          rm -f conflicts.txt
 
+          # Cek ulang: konflik di luar localversion-* berarti gagal
+          git diff --name-only --diff-filter=U > conflicts.txt || true
           if [ -s conflicts.txt ]; then
-            echo "::error::Merge berhenti: ada konflik di luar localversion-*. Lihat artifact conflicts.txt"
+            echo "::error::Merge berhenti: konflik di luar localversion-*. Lihat artifact conflicts.txt"
+            cat conflicts.txt
             exit 1
           fi
 
+          rm -f conflicts.txt
           git commit -m "Merge CIP ${CIP_TAG} into lineage-23.2 (earth)"
           git log --oneline -3
           cat localversion-cip localversion-st
@@ -89,9 +99,11 @@ jobs:
           sudo apt-get install -y \
             gcc-aarch64-linux-gnu clang lld flex bison bc \
             libssl-dev libelf-dev cpio rsync python3
+          df -h
 
       - name: Build test (earth_defconfig, GCC aarch64)
         if: inputs.build
+        working-directory: kernel
         run: |
           set -e
           make -j"$(nproc)" O=out ARCH=arm64 \
@@ -105,17 +117,22 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cip-merge-result-${{ github.run_number }}
+          name: cip-merge-result-run-${{ github.run_number }}
           path: |
-            conflicts.txt
-            kernel-config.txt
-            out/arch/arm64/boot/Image.gz
+            kernel/conflicts.txt
+            kernel/kernel-config.txt
+            kernel/out/arch/arm64/boot/Image.gz
           if-no-files-found: warn
 
-      - name: Push merge branch (opsional)
+      - name: Push merge branch (opsional, ke repo ini)
         if: inputs.push_branch
+        working-directory: kernel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CIP_NUM: ${{ env.CIP_NUM }}
         run: |
+          git remote add fork "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" || true
           BRANCH="cip${CIP_NUM}-merge"
           git checkout -b "${BRANCH}"
-          git push origin "${BRANCH}" --force-with-lease
-          echo "Pushed branch: ${BRANCH}"
+          git push fork "${BRANCH}" --force-with-lease
+          echo "Pushed branch: ${BRANCH} ke ${{ github.repository }}"
