@@ -45,6 +45,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config commit.gpgsign false
           git log --oneline -1
+          echo "--- localversion sebelum merge ---"
           cat localversion-cip localversion-st
 
       - name: Fetch CIP
@@ -56,7 +57,7 @@ jobs:
           git fetch cip "refs/tags/${CIP_TAG}:refs/tags/${CIP_TAG}"
           git log --oneline -1 "${CIP_TAG}"
 
-      - name: Merge CIP
+      - name: Merge CIP + dump konflik
         working-directory: kernel
         env:
           CIP_TAG: ${{ inputs.cip_tag }}
@@ -65,31 +66,50 @@ jobs:
           git merge --no-commit --no-ff "${CIP_TAG}"
           set -e
 
-          echo "=== File konflik setelah merge ==="
+          # Daftar + isi lengkap konflik
           git diff --name-only --diff-filter=U > conflicts.txt || true
-          cat conflicts.txt || true
+          git diff > conflicts.patch || true
+
+          # Simpan versi base (:1) / ours-Lineage (:2) / theirs-CIP (:3) per file
+          mkdir -p conflict-dump
+          while read -r f; do
+            [ -z "$f" ] && continue
+            d="conflict-dump/$(dirname "$f")"
+            mkdir -p "$d"
+            git show ":1:$f" > "$d/$(basename "$f").base"   2>/dev/null || true
+            git show ":2:$f" > "$d/$(basename "$f").ours"   2>/dev/null || true
+            git show ":3:$f" > "$d/$(basename "$f").theirs" 2>/dev/null || true
+          done < conflicts.txt
+          tar czf conflicts-dump.tar.gz conflict-dump
+
+          echo "=== File konflik setelah merge ==="
+          cat conflicts.txt
 
           CIP_NUM=$(echo "${CIP_TAG}" | sed -E 's/.*-cip([0-9]+).*/\1/')
           ST_NUM=$((CIP_NUM - 116))   # cip124=st8, cip136=st20
           echo "CIP_NUM=${CIP_NUM}" >> "$GITHUB_ENV"
           echo "ST_NUM=${ST_NUM}"   >> "$GITHUB_ENV"
 
-          # Bump versi (file ini dikelola manual di tree Android)
+          # Bump versi (dikelola manual di tree Android)
           printf -- "-cip%s\n" "${CIP_NUM}" > localversion-cip
           printf -- "-st%s\n"  "${ST_NUM}"  > localversion-st
           git add localversion-cip localversion-st
 
-          # Cek ulang: konflik di luar localversion-* berarti gagal
+          # Cek ulang konflik tersisa
           git diff --name-only --diff-filter=U > conflicts.txt || true
+          git diff > conflicts.patch || true
           if [ -s conflicts.txt ]; then
-            echo "::error::Merge berhenti: konflik di luar localversion-*. Lihat artifact conflicts.txt"
+            echo "::error::Konflik di luar localversion-*. Lihat artifact conflicts-dump.tar.gz"
             cat conflicts.txt
             exit 1
           fi
 
-          rm -f conflicts.txt
+          # Merge bersih -> commit
+          rm -f conflicts.txt conflicts.patch
+          rm -rf conflict-dump conflicts-dump.tar.gz
           git commit -m "Merge CIP ${CIP_TAG} into lineage-23.2 (earth)"
           git log --oneline -3
+          echo "--- localversion setelah merge ---"
           cat localversion-cip localversion-st
 
       - name: Install build deps
@@ -120,6 +140,8 @@ jobs:
           name: cip-merge-result-run-${{ github.run_number }}
           path: |
             kernel/conflicts.txt
+            kernel/conflicts.patch
+            kernel/conflicts-dump.tar.gz
             kernel/kernel-config.txt
             kernel/out/arch/arm64/boot/Image.gz
           if-no-files-found: warn
